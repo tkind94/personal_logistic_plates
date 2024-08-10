@@ -5,34 +5,21 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Package mod
-      run: zip -r personal_logistic_plates_${{ github.ref_name }}.zip . -x "*.git*" -x ".github/**"
+      run: zip -r personal_logistic_plates_${{ github.ref_name }}.zip . -x "*.git*" -x ".github/**" -x ".vscode"
 
-    - name: Create GitHub Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: GH Release
+      uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ github.ref_name }}
-        release_name: Release ${{ github.ref_name }}
-        draft: false
-        prerelease: false
-
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./personal_logistic_plates_${{ github.ref_name }}.zip
-        asset_name: personal_logistic_plates_${{ github.ref_name }}.zip
-        asset_content_type: application/zip
+        files: personal_logistic_plates_${{ github.ref_name }}.zip
