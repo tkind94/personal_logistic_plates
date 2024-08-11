@@ -1,6 +1,6 @@
 {
   "name": "personal_logistic_plates",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "title": "Personal Logistic Plates",
   "author": "Xaerie",
   "description": "Adds personal logistic plates which transfer items from nearby containers to the player's inventory based on logistic requests.",
