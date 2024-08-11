@@ -39,11 +39,14 @@ script.on_event(defines.events.on_player_changed_position, function(event)
                 end
             end
 
-            -- Find nearby container-type entities
+            -- Get the configurable range
+            local range = settings.global["logistic_plate_range"].value
+
+            -- Find nearby container-type entities within the configurable range
             local containers = surface.find_entities_filtered{
                 type = "container",
                 position = position,
-                radius = 10
+                radius = range
             }
 
             -- Transfer items from containers to player's inventory
