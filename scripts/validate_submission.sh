@@ -48,13 +48,17 @@ if [ "${1:-}" == "main" ]; then
     IS_MAIN_PUSH=true
 fi
 
-# Read current version
-if [ ! -f "$REPO_DIR/info.json" ]; then
+# Locate info.json (repo root or mod folder)
+if [ -f "$REPO_DIR/info.json" ]; then
+    INFO_JSON="$REPO_DIR/info.json"
+elif [ -f "$REPO_DIR/personal_logistic_plates/info.json" ]; then
+    INFO_JSON="$REPO_DIR/personal_logistic_plates/info.json"
+else
     echo "Error: info.json not found."
     exit 1
 fi
 
-CURRENT_INFO=$(cat "$REPO_DIR/info.json")
+CURRENT_INFO=$(cat "$INFO_JSON")
 CURRENT_VERSION=$(get_version "$CURRENT_INFO")
 
 if [ -z "$CURRENT_VERSION" ]; then
@@ -74,7 +78,14 @@ fi
 
 # Check previous version if main push
 if [ "$IS_MAIN_PUSH" = true ]; then
+    PREVIOUS_INFO=""
     if PREVIOUS_INFO=$(git show HEAD^:info.json 2>/dev/null); then
+        :
+    elif PREVIOUS_INFO=$(git show HEAD^:personal_logistic_plates/info.json 2>/dev/null); then
+        :
+    fi
+
+    if [ -n "$PREVIOUS_INFO" ]; then
         PREVIOUS_VERSION=$(get_version "$PREVIOUS_INFO")
 
         if [ -n "$PREVIOUS_VERSION" ]; then

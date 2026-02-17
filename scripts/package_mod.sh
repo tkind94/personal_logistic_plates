@@ -7,7 +7,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-if [ ! -f "$REPO_DIR/info.json" ]; then
+# Locate info.json (repo root or mod folder)
+if [ -f "$REPO_DIR/info.json" ]; then
+    INFO_JSON="$REPO_DIR/info.json"
+elif [ -f "$REPO_DIR/personal_logistic_plates/info.json" ]; then
+    INFO_JSON="$REPO_DIR/personal_logistic_plates/info.json"
+else
     echo "Error: info.json not found at $REPO_DIR"
     exit 1
 fi
@@ -15,10 +20,11 @@ fi
 # Extract name and version from info.json
 get_json_value() {
     local key=$1
+    local file="${INFO_JSON:-$REPO_DIR/info.json}"
     if command -v jq >/dev/null 2>&1; then
-        jq -r ".$key" "$REPO_DIR/info.json"
+        jq -r ".${key}" "$file"
     else
-        grep -o "\"$key\": *\"[^\"]*\"" "$REPO_DIR/info.json" | cut -d'"' -f4
+        grep -o "\"$key\": *\"[^\"]*\"" "$file" | cut -d'"' -f4
     fi
 }
 
