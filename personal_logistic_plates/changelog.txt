@@ -1,4 +1,22 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.3.0
+Date: 2026-02-16
+  Features:
+    - Polished transfer visuals (moving item sprites + light pulses).
+    - Rate-limited per-tier transfer throughput (smooth per-second transfer).
+    - Per-plate container caching and movement-triggered detection to reduce lag.
+    - Added Blender→sprite workflow documentation and placeholder animated-sprite-ready prototype fields.
+
+  Changes:
+    - Replaced wooden-chest icons with custom plate thumbnails.
+    - Added CI/CD workflow and packaging scripts.
+    - Improved placement collision handling and prototype collision masks.
+
+  Fixes:
+    - Fixed false overlap-placement rejection.
+    - Fixed item transfer correctness and quality-aware inventory handling.
+
+---------------------------------------------------------------------------------------------------
 Version: 1.2.0
 Date: 2026-02-16
   Features:
