@@ -1,0 +1,13 @@
+---------------------------------------------------------------------------------------------------
+Version: 1.2.0
+Date: 2026-02-16
+  Features:
+    - Added tiered logistic plates (Tier 1/2/3) with larger footprint and increased transfer range.
+    - Added per-tier transfer throughput limits.
+    - Added moving item transfer visual effects.
+    - Added temporary custom plate textures for all tiers.
+
+  Changes:
+    - Improved runtime performance with player plate-state tracking and per-plate container caching.
+    - Expanded container support to include logistic chest-style containers.
+    - Updated plate rendering to floor layer behavior.
