@@ -46,14 +46,15 @@ BUILD_DIR=$(mktemp -d)
 MOD_DIR="$BUILD_DIR/$FULL_NAME"
 mkdir -p "$MOD_DIR"
 
-# Copy mod files (excluding dev/git files)
+# Copy mod files (exclude dev/git files). Only copy the mod folder so info.json
+# appears at the root of the packaged archive (required by the mod portal).
 rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
-    --exclude='scripts' --exclude='.agent' --exclude='.vscode' \
-    --exclude='*.zip' --exclude='.releaserc' \
+    --exclude='.vscode' --exclude='*.zip' --exclude='.releaserc' \
     --exclude='*_original_*.png' \
-    "$REPO_DIR/" "$MOD_DIR/"
+    "$REPO_DIR/personal_logistic_plates/" "$MOD_DIR/"
 
-# Create the zip
+# Create the zip (archive contains a single top-level folder named $FULL_NAME
+# whose contents are the mod files — info.json will be at the archive root)
 cd "$BUILD_DIR"
 zip -qr "$REPO_DIR/$ZIP_NAME" "$FULL_NAME"
 cd "$REPO_DIR"

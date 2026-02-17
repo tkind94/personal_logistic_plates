@@ -29,12 +29,19 @@ if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" == "null" ]; then
 fi
 
 echo "Uploading to $UPLOAD_URL..."
-# The upload endpoint expects the file in a multipart form field named 'file'
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$UPLOAD_URL" -F "file=@$FILE_PATH")
+# The upload endpoint expects the file in a multipart form field named 'file'.
+# Capture response body for better CI diagnostics.
+RESPONSE_TMP=$(mktemp)
+HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESPONSE_TMP" -X POST "$UPLOAD_URL" -F "file=@$FILE_PATH")
 
 if [ "$HTTP_CODE" -ne 200 ]; then
     echo "Upload failed with status code $HTTP_CODE"
+    echo "Response from mod portal:"
+    cat "$RESPONSE_TMP" || true
+    rm -f "$RESPONSE_TMP"
     exit 1
 fi
+
+rm -f "$RESPONSE_TMP"
 
 echo "Upload successful!"
