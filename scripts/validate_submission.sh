@@ -78,27 +78,32 @@ fi
 
 # Check previous version if main push
 if [ "$IS_MAIN_PUSH" = true ]; then
-    PREVIOUS_INFO=""
-    if PREVIOUS_INFO=$(git show HEAD^:info.json 2>/dev/null); then
-        :
-    elif PREVIOUS_INFO=$(git show HEAD^:personal_logistic_plates/info.json 2>/dev/null); then
-        :
-    fi
+    # Only enforce version-bump if info.json was modified in this commit
+    if git diff --name-only HEAD^ HEAD | grep -q -E '(^|/)info.json$'; then
+        PREVIOUS_INFO=""
+        if PREVIOUS_INFO=$(git show HEAD^:info.json 2>/dev/null); then
+            :
+        elif PREVIOUS_INFO=$(git show HEAD^:personal_logistic_plates/info.json 2>/dev/null); then
+            :
+        fi
 
-    if [ -n "$PREVIOUS_INFO" ]; then
-        PREVIOUS_VERSION=$(get_version "$PREVIOUS_INFO")
+        if [ -n "$PREVIOUS_INFO" ]; then
+            PREVIOUS_VERSION=$(get_version "$PREVIOUS_INFO")
 
-        if [ -n "$PREVIOUS_VERSION" ]; then
-            echo "Previous version: $PREVIOUS_VERSION"
-            if [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
-                echo "Error: Version in info.json must be bumped for main commits."
-                exit 1
+            if [ -n "$PREVIOUS_VERSION" ]; then
+                echo "Previous version: $PREVIOUS_VERSION"
+                if [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
+                    echo "Error: Version in info.json must be bumped when info.json is changed on main."
+                    exit 1
+                fi
+            else
+                echo "Warning: Could not parse previous version."
             fi
         else
-            echo "Warning: Could not parse previous version."
+            echo "Warning: Could not fetch previous version from git history (first commit?)."
         fi
     else
-        echo "Warning: Could not fetch previous version from git history (first commit?)."
+        echo "info.json not changed in this commit; skipping version-bump requirement for main."
     fi
 else
     echo "Skipping strict version bump check (not a main push)."
