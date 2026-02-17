@@ -1,25 +1,56 @@
-name: Release
+name: CI/CD
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
-
-permissions:
-  contents: write
+    branches:
+      - main
+      - '*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Validate Version and Changelog
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            ./scripts/validate_submission.sh main
+          else
+            ./scripts/validate_submission.sh
+          fi
+
+  release:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Package mod
-      run: zip -r personal_logistic_plates_${{ github.ref_name }}.zip . -x "*.git*" -x ".github/**" -x ".vscode"
+      - name: Package Mod
+        id: package
+        run: ./scripts/package_mod.sh
 
-    - name: GH Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: personal_logistic_plates_${{ github.ref_name }}.zip
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.package.outputs.version }}
+          files: ${{ steps.package.outputs.artifact_name }}
+          body: "Release ${{ steps.package.outputs.version }}"
+          draft: false
+          prerelease: false
+
+      - name: Upload to Mod Portal
+        run: |
+          ./scripts/upload_mod.sh "${{ steps.package.outputs.mod_name }}" "${{ steps.package.outputs.artifact_name }}" "${{ secrets.FACTORIO_TOKEN }}"
