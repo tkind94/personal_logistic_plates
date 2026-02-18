@@ -10,8 +10,16 @@ local EFFECT_DURATION_TICKS = 16
 
 local TIER_CONFIG = {
     logistic_plate_tier1 = {range_multiplier = 1.0, items_per_second = 30},
-    logistic_plate_tier2 = {range_multiplier = 2.0, items_per_second = 90},
-    logistic_plate_tier3 = {range_multiplier = 3.0, items_per_second = 180}
+    logistic_plate_tier2 = { range_multiplier = 3.0, items_per_second = 90 },
+    logistic_plate_tier3 = { range_multiplier = 7.0, items_per_second = 210 }
+}
+
+local QUALITY_TRANSFER_MULTIPLIER = {
+    normal = 1.0,
+    uncommon = 1.5,
+    rare = 2.0,
+    epic = 2.5,
+    legendary = 3.0
 }
 
 local PLATE_NAMES = {
@@ -184,7 +192,15 @@ local function get_item_budget(plate_name)
         return 0
     end
 
-    return math.floor(config.items_per_second / UPDATES_PER_SECOND)
+    return config.items_per_second / UPDATES_PER_SECOND
+end
+
+local function get_quality_transfer_multiplier(quality_name)
+    if not quality_name then
+        return 1.0
+    end
+
+    return QUALITY_TRANSFER_MULTIPLIER[quality_name] or 1.0
 end
 
 local function get_cached_containers(plate, range, tick)
@@ -349,8 +365,8 @@ local function transfer_for_player(player, tick)
 
     mod_log(string.format("plate detected name=%s", plate.name))
 
-    local item_budget = get_item_budget(plate.name)
-    if item_budget <= 0 then
+    local budget_units = get_item_budget(plate.name)
+    if budget_units <= 0 then
         return
     end
 
@@ -367,7 +383,7 @@ local function transfer_for_player(player, tick)
     local total_inserted = 0
 
     for _, container in ipairs(containers) do
-        if item_budget <= 0 then
+        if budget_units <= 0 then
             break
         end
 
@@ -376,7 +392,7 @@ local function transfer_for_player(player, tick)
             local contents = inventory.get_contents()
 
             for key, value in pairs(contents) do
-                if item_budget <= 0 then
+                if budget_units <= 0 then
                     break
                 end
 
@@ -386,14 +402,21 @@ local function transfer_for_player(player, tick)
                     local requests_for_item = logistic_requests[item_name]
                     if requests_for_item then
                         for _, request in ipairs(requests_for_item) do
-                            if item_budget <= 0 then
+                            if budget_units <= 0 then
                                 break
                             end
 
                             local quality_matches = request.quality == nil or request.quality == item_quality
 
                             if quality_matches and request.remaining > 0 then
-                                local transfer_count = math.min(item_count, request.remaining, item_budget)
+                                local quality_multiplier = get_quality_transfer_multiplier(item_quality)
+                                local max_by_budget = math.floor(budget_units * quality_multiplier)
+
+                                if max_by_budget <= 0 then
+                                    break
+                                end
+
+                                local transfer_count = math.min(item_count, request.remaining, max_by_budget)
                                 local inserted_count = player.insert{
                                     name = item_name,
                                     quality = item_quality,
@@ -410,7 +433,7 @@ local function transfer_for_player(player, tick)
                                     item_count = item_count - inserted_count
                                     request.remaining = request.remaining - inserted_count
                                     total_inserted = total_inserted + inserted_count
-                                    item_budget = item_budget - inserted_count
+                                    budget_units = budget_units - (inserted_count / quality_multiplier)
 
                                     spawn_transfer_effect(plate.surface, container.position, position, item_name, inserted_count)
                                 end

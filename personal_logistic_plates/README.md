@@ -15,8 +15,8 @@ Personal Logistic Plates is a Factorio mod that adds special plates which transf
 ## Plate Tiers
 
 - Tier 1: Base range from the mod setting.
-- Tier 2: 2x the base range, larger footprint, higher crafting cost.
-- Tier 3: 3x the base range, largest footprint, highest crafting cost.
+- Tier 2: 3x the base range, larger footprint, higher crafting cost.
+- Tier 3: 7x the base range, largest footprint, highest crafting cost.
 
 ## Transfer Behavior
 
@@ -24,7 +24,13 @@ Personal Logistic Plates is a Factorio mod that adds special plates which transf
 - Transfers are rate-limited per tier instead of instant:
 	- Tier 1: 30 items/second
 	- Tier 2: 90 items/second
-	- Tier 3: 180 items/second
+	- Tier 3: 210 items/second
+- Transfer throughput is multiplied by item quality:
+	- Normal: 1.0x
+	- Uncommon: 1.5x
+	- Rare: 2.0x
+	- Epic: 2.5x
+	- Legendary: 3.0x
 - Successful transfers render moving item sprites with light pulses from source container to player.
 - Runtime uses movement-triggered plate detection plus short-lived per-plate container caching to reduce lag.
 

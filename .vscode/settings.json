@@ -2,8 +2,7 @@
     "factorio.versions": [
         {
             "name": "Steam",
-            "factorioPath": "~/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio",
-            "active": true
+            "factorioPath": "~/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio"
         }
     ],
     "Lua.workspace.library": [
