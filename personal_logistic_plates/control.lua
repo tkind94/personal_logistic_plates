@@ -1,263 +1,179 @@
--- control.lua
+local config = require("config")
 
-local LOG_PREFIX = "[personal_logistic_plates]"
-local DEBUG_LOGGING = false
+-- Constants
 local UPDATE_INTERVAL_TICKS = 6
 local UPDATES_PER_SECOND = 60 / UPDATE_INTERVAL_TICKS
-local CONTAINER_CACHE_REFRESH_TICKS = 60
-local MAX_ACTIVE_EFFECTS = 96
+local CONTAINER_CACHE_TTL = 60
+local MAX_TRANSFER_EFFECTS = 96
 local EFFECT_DURATION_TICKS = 16
 
-local TIER_CONFIG = {
-    logistic_plate_tier1 = {range_multiplier = 1.0, items_per_second = 30},
-    logistic_plate_tier2 = { range_multiplier = 3.0, items_per_second = 90 },
-    logistic_plate_tier3 = { range_multiplier = 7.0, items_per_second = 210 }
-}
-
-local QUALITY_TRANSFER_MULTIPLIER = {
-    normal = 1.0,
-    uncommon = 1.5,
-    rare = 2.0,
-    epic = 2.5,
-    legendary = 3.0
-}
-
-local PLATE_NAMES = {
-    "logistic_plate_tier1",
-    "logistic_plate_tier2",
-    "logistic_plate_tier3"
-}
-
-local PLATE_NAME_SET = {
-    logistic_plate_tier1 = true,
-    logistic_plate_tier2 = true,
-    logistic_plate_tier3 = true
-}
-
 local CONTAINER_TYPES = {
-    "container",
-    "logistic-container",
-    "infinity-container",
-    "linked-container",
-    "cargo-wagon"
+    "container", "logistic-container", "infinity-container",
+    "linked-container", "cargo-wagon"
 }
 
-local function mod_log(message)
-    if DEBUG_LOGGING then
-        log(LOG_PREFIX .. " " .. tostring(message))
-    end
+-- Derive plate search radius from largest tier
+local PLATE_SEARCH_RADIUS = 0
+for _, tier in ipairs(config.TIERS) do
+    local half = tier.size_tiles / 2
+    if half > PLATE_SEARCH_RADIUS then PLATE_SEARCH_RADIUS = half end
+end
+PLATE_SEARCH_RADIUS = PLATE_SEARCH_RADIUS + 0.3
+
+-- Build entity event filter from config
+local PLATE_EVENT_FILTER = {}
+for _, tier in ipairs(config.TIERS) do
+    PLATE_EVENT_FILTER[#PLATE_EVENT_FILTER + 1] = {filter = "name", name = tier.name}
 end
 
-local function ensure_storage()
-    storage.player_plate_state = storage.player_plate_state or {}
-    storage.plate_container_cache = storage.plate_container_cache or {}
-    storage.transfer_effects = storage.transfer_effects or {}
+--------------------------------------------------------------------------------
+-- Storage
+--------------------------------------------------------------------------------
+
+local function init_storage()
+    storage.plate_state = storage.plate_state or {}
+    storage.container_cache = storage.container_cache or {}
+    storage.effects = storage.effects or {}
 end
 
-local function collect_logistic_requests(player)
-    local requester_point = player.get_requester_point()
-    if not requester_point then
-        return {}
-    end
+--------------------------------------------------------------------------------
+-- Quality
+--------------------------------------------------------------------------------
 
-    local filters = requester_point.filters
-    if not filters then
-        return {}
-    end
+local function quality_multiplier(quality_name)
+    if not quality_name then return 1.0 end
+    local proto = prototypes.quality[quality_name]
+    return proto and config.quality_multiplier(proto.level or 0) or 1.0
+end
 
-    local requests_by_item = {}
+--------------------------------------------------------------------------------
+-- Logistic requests
+--------------------------------------------------------------------------------
 
-    for _, filter in ipairs(filters) do
-        if filter.name and filter.count and filter.count > 0 then
-            local requested_item = {name = filter.name}
-            if filter.quality then
-                requested_item.quality = filter.quality
-            end
+local function collect_requests(player)
+    local point = player.get_requester_point()
+    if not point then return nil end
 
-            local current_count = player.get_item_count(requested_item)
-            local remaining = filter.count - current_count
+    local filters = point.filters
+    if not filters then return nil end
 
+    local by_item, has_any = {}, false
+
+    for _, f in ipairs(filters) do
+        if f.name and f.count and f.count > 0 then
+            local query = {name = f.name}
+            if f.quality then query.quality = f.quality end
+
+            local remaining = f.count - player.get_item_count(query)
             if remaining > 0 then
-                if not requests_by_item[filter.name] then
-                    requests_by_item[filter.name] = {}
-                end
-
-                requests_by_item[filter.name][#requests_by_item[filter.name] + 1] = {
-                    quality = filter.quality,
-                    min = filter.count,
-                    max = filter.max_count,
+                if not by_item[f.name] then by_item[f.name] = {} end
+                by_item[f.name][#by_item[f.name] + 1] = {
+                    quality = f.quality,
                     remaining = remaining
                 }
+                has_any = true
             end
         end
     end
 
-    return requests_by_item
+    return has_any and by_item or nil
 end
 
-local function read_content_entry(key, value)
-    if type(value) == "table" then
-        if value.name and value.count then
-            return value.name, value.quality, value.count
-        end
-    elseif type(key) == "table" and type(value) == "number" then
-        if key.name then
-            return key.name, key.quality, value
-        end
-    elseif type(key) == "string" and type(value) == "number" then
-        return key, nil, value
-    end
+--------------------------------------------------------------------------------
+-- Plate detection
+--------------------------------------------------------------------------------
 
-    return nil, nil, nil
+local function position_in_box(pos, box)
+    return pos.x >= box.left_top.x and pos.x <= box.right_bottom.x
+       and pos.y >= box.left_top.y and pos.y <= box.right_bottom.y
 end
 
-local function count_pending_requests(logistic_requests)
-    local pending = 0
-
-    for _, requests_for_item in pairs(logistic_requests) do
-        for _, request in ipairs(requests_for_item) do
-            if request.remaining > 0 then
-                pending = pending + 1
-            end
-        end
-    end
-
-    return pending
-end
-
-local function is_position_in_plate(position, plate)
-    local box = plate.bounding_box
-    return
-        position.x >= box.left_top.x and
-        position.x <= box.right_bottom.x and
-        position.y >= box.left_top.y and
-        position.y <= box.right_bottom.y
-end
-
-local function get_plate_under_player(surface, position)
+local function find_plate_at(surface, position)
     local plates = surface.find_entities_filtered{
-        name = PLATE_NAMES,
+        name = config.PLATE_NAMES,
         position = position,
-        radius = 1.8
+        radius = PLATE_SEARCH_RADIUS
     }
 
-    local nearest_plate = nil
-    local nearest_distance_sq = nil
-
+    local best, best_dist = nil, math.huge
     for _, plate in ipairs(plates) do
-        if is_position_in_plate(position, plate) then
+        if position_in_box(position, plate.bounding_box) then
             local dx = plate.position.x - position.x
             local dy = plate.position.y - position.y
-            local distance_sq = dx * dx + dy * dy
-
-            if not nearest_distance_sq or distance_sq < nearest_distance_sq then
-                nearest_distance_sq = distance_sq
-                nearest_plate = plate
+            local dist = dx * dx + dy * dy
+            if dist < best_dist then
+                best, best_dist = plate, dist
             end
         end
     end
 
-    return nearest_plate
+    return best
 end
 
-local function update_player_plate_state(player)
-    if not player or not player.valid then
-        return
-    end
-
-    local state = storage.player_plate_state[player.index]
+local function update_plate_state(player)
+    local state = storage.plate_state[player.index]
     if state and state.plate and state.plate.valid then
-        if is_position_in_plate(player.physical_position, state.plate) then
+        if position_in_box(player.physical_position, state.plate.bounding_box) then
             return
         end
     end
 
-    local plate = get_plate_under_player(player.physical_surface, player.physical_position)
-    if plate then
-        storage.player_plate_state[player.index] = {plate = plate}
-    else
-        storage.player_plate_state[player.index] = nil
-    end
+    local plate = find_plate_at(player.physical_surface, player.physical_position)
+    storage.plate_state[player.index] = plate and {plate = plate} or nil
 end
 
-local function get_transfer_range(plate_name)
-    local base_range = tonumber(settings.global["logistic_plate_range"].value) or 10
-    local multiplier = (TIER_CONFIG[plate_name] and TIER_CONFIG[plate_name].range_multiplier) or 1.0
-    return base_range * multiplier
-end
+--------------------------------------------------------------------------------
+-- Container cache
+--------------------------------------------------------------------------------
 
-local function get_item_budget(plate_name)
-    local config = TIER_CONFIG[plate_name]
-    if not config then
-        return 0
-    end
+local function get_containers(plate, range, tick)
+    local id = plate.unit_number
+    if not id then return {} end
 
-    return config.items_per_second / UPDATES_PER_SECOND
-end
-
-local function get_quality_transfer_multiplier(quality_name)
-    if not quality_name then
-        return 1.0
-    end
-
-    return QUALITY_TRANSFER_MULTIPLIER[quality_name] or 1.0
-end
-
-local function get_cached_containers(plate, range, tick)
-    local unit_number = plate.unit_number
-    if not unit_number then
-        return {}
-    end
-
-    local cache_entry = storage.plate_container_cache[unit_number]
-    local must_refresh =
-        (not cache_entry) or
-        (cache_entry.range ~= range) or
-        (tick - cache_entry.last_refresh_tick >= CONTAINER_CACHE_REFRESH_TICKS)
-
-    if must_refresh then
-        cache_entry = {
-            last_refresh_tick = tick,
+    local entry = storage.container_cache[id]
+    if not entry or entry.range ~= range or (tick - entry.tick) >= CONTAINER_CACHE_TTL then
+        entry = {
+            tick = tick,
             range = range,
-            containers = plate.surface.find_entities_filtered{
+            list = plate.surface.find_entities_filtered{
                 type = CONTAINER_TYPES,
                 position = plate.position,
                 radius = range
             }
         }
-        storage.plate_container_cache[unit_number] = cache_entry
+        storage.container_cache[id] = entry
     end
 
-    local valid_containers = {}
-    for _, container in ipairs(cache_entry.containers) do
-        if container.valid then
-            valid_containers[#valid_containers + 1] = container
+    local write = 1
+    for i = 1, #entry.list do
+        if entry.list[i].valid then
+            entry.list[write] = entry.list[i]
+            write = write + 1
         end
     end
+    for i = write, #entry.list do entry.list[i] = nil end
 
-    cache_entry.containers = valid_containers
-    return valid_containers
+    return entry.list
 end
 
-local function spawn_transfer_effect(surface, from_position, to_position, item_name, inserted_count)
-    if #storage.transfer_effects >= MAX_ACTIVE_EFFECTS then
-        return
-    end
+--------------------------------------------------------------------------------
+-- Transfer effects
+--------------------------------------------------------------------------------
 
-    local effect_count = math.min(3, math.max(1, math.ceil(inserted_count / 20)))
+local function spawn_effect(surface, from, to, item_name, count)
+    local fx = storage.effects
+    if #fx >= MAX_TRANSFER_EFFECTS then return end
 
-    for _ = 1, effect_count do
-        if #storage.transfer_effects >= MAX_ACTIVE_EFFECTS then
-            break
-        end
-
-        storage.transfer_effects[#storage.transfer_effects + 1] = {
+    local n = math.min(3, math.ceil(count / 20))
+    for _ = 1, n do
+        if #fx >= MAX_TRANSFER_EFFECTS then return end
+        fx[#fx + 1] = {
             surface_index = surface.index,
             sprite = "item/" .. item_name,
-            from_x = from_position.x + (math.random() - 0.5) * 0.35,
-            from_y = from_position.y + (math.random() - 0.5) * 0.35,
-            to_x = to_position.x + (math.random() - 0.5) * 0.12,
-            to_y = to_position.y + (math.random() - 0.5) * 0.12,
+            from_x = from.x + (math.random() - 0.5) * 0.35,
+            from_y = from.y + (math.random() - 0.5) * 0.35,
+            to_x   = to.x   + (math.random() - 0.5) * 0.12,
+            to_y   = to.y   + (math.random() - 0.5) * 0.12,
             offset_x = (math.random() - 0.5) * 0.25,
             offset_y = (math.random() - 0.5) * 0.25,
             age = 0,
@@ -267,256 +183,163 @@ local function spawn_transfer_effect(surface, from_position, to_position, item_n
     end
 end
 
-local function update_transfer_effects()
-    local effects = storage.transfer_effects
-    if #effects == 0 then
-        return
-    end
+local function tick_effects()
+    local fx = storage.effects
+    if #fx == 0 then return end
 
-    local write_index = 1
-
-    for _, effect in ipairs(effects) do
-        effect.age = effect.age + 1
-
-        if effect.age <= effect.duration then
-            local surface = game.surfaces[effect.surface_index]
+    local write = 1
+    for _, e in ipairs(fx) do
+        e.age = e.age + 1
+        if e.age <= e.duration then
+            local surface = game.surfaces[e.surface_index]
             if surface then
-                local t = effect.age / effect.duration
-                local inv_t = 1 - t
-                local x = effect.from_x + (effect.to_x - effect.from_x) * t + effect.offset_x * inv_t
-                local y = effect.from_y + (effect.to_y - effect.from_y) * t + effect.offset_y * inv_t
+                local t = e.age / e.duration
+                local x = e.from_x + (e.to_x - e.from_x) * t + e.offset_x * (1 - t)
+                local y = e.from_y + (e.to_y - e.from_y) * t + e.offset_y * (1 - t)
 
                 rendering.draw_sprite{
-                    sprite = effect.sprite,
-                    surface = surface,
+                    sprite = e.sprite, surface = surface,
                     target = {x = x, y = y},
-                    x_scale = effect.scale,
-                    y_scale = effect.scale,
+                    x_scale = e.scale, y_scale = e.scale,
                     tint = {r = 1, g = 1, b = 1, a = 0.95},
-                    render_layer = "air-object",
-                    time_to_live = 2
+                    render_layer = "air-object", time_to_live = 2
                 }
-
                 rendering.draw_light{
-                    sprite = "utility/light_medium",
-                    surface = surface,
+                    sprite = "utility/light_medium", surface = surface,
                     target = {x = x, y = y},
-                    scale = 0.25,
-                    intensity = 0.5,
+                    scale = 0.25, intensity = 0.5,
                     color = {r = 0.3, g = 0.9, b = 1.0},
                     time_to_live = 2
                 }
             end
-
-            effects[write_index] = effect
-            write_index = write_index + 1
+            fx[write] = e
+            write = write + 1
         end
     end
-
-    for index = write_index, #effects do
-        effects[index] = nil
-    end
+    for i = write, #fx do fx[i] = nil end
 end
 
-local function clear_plate_cache(plate)
-    if plate and plate.valid and plate.unit_number then
-        storage.plate_container_cache[plate.unit_number] = nil
-    end
-end
-
-local function clear_player_plate_if_matches(plate)
-    if not plate or not plate.valid then
-        return
-    end
-
-    for player_index, state in pairs(storage.player_plate_state) do
-        if state.plate == plate then
-            storage.player_plate_state[player_index] = nil
-        end
-    end
-end
+--------------------------------------------------------------------------------
+-- Core transfer
+--------------------------------------------------------------------------------
 
 local function transfer_for_player(player, tick)
-    if not player or not player.valid then
-        return
-    end
+    if not player.character then return end
 
-    local character = player.character
-    if not character then
-        return
-    end
-
-    local state = storage.player_plate_state[player.index]
-    if not state then
-        return
-    end
+    local state = storage.plate_state[player.index]
+    if not state then return end
 
     local plate = state.plate
     if not plate or not plate.valid then
-        storage.player_plate_state[player.index] = nil
+        storage.plate_state[player.index] = nil
         return
     end
 
-    local position = player.physical_position
-    if not is_position_in_plate(position, plate) then
-        storage.player_plate_state[player.index] = nil
+    local pos = player.physical_position
+    if not position_in_box(pos, plate.bounding_box) then
+        storage.plate_state[player.index] = nil
         return
     end
 
-    mod_log(string.format("plate detected name=%s", plate.name))
+    local tier = config.TIER_BY_NAME[plate.name]
+    if not tier then return end
 
-    local budget_units = get_item_budget(plate.name)
-    if budget_units <= 0 then
-        return
-    end
+    local requests = collect_requests(player)
+    if not requests then return end
 
-    local logistic_requests = collect_logistic_requests(player)
-    local pending_before = count_pending_requests(logistic_requests)
-
-    if pending_before == 0 then
-        return
-    end
-
-    local range = get_transfer_range(plate.name)
-    local containers = get_cached_containers(plate, range, tick)
-
-    local total_inserted = 0
+    local base_range = tonumber(settings.startup["logistic_plate_range"].value) or 10
+    local containers = get_containers(plate, base_range * tier.range_multiplier, tick)
+    local budget = tier.items_per_second / UPDATES_PER_SECOND
 
     for _, container in ipairs(containers) do
-        if budget_units <= 0 then
-            break
-        end
+        if budget <= 0 then break end
 
         local inventory = container.get_inventory(defines.inventory.chest)
-        if inventory then
-            local contents = inventory.get_contents()
+        if not inventory then goto next_container end
 
-            for key, value in pairs(contents) do
-                if budget_units <= 0 then
-                    break
+        for _, stack in ipairs(inventory.get_contents()) do
+            if budget <= 0 then break end
+            if not stack.name or stack.count <= 0 then goto next_stack end
+
+            local item_requests = requests[stack.name]
+            if not item_requests then goto next_stack end
+
+            local available = stack.count
+            for _, req in ipairs(item_requests) do
+                if budget <= 0 or available <= 0 then break end
+                if req.remaining <= 0 then goto next_req end
+                if req.quality ~= nil and req.quality ~= stack.quality then goto next_req end
+
+                local qm = quality_multiplier(stack.quality)
+                local limit = math.floor(budget * qm)
+                if limit <= 0 then break end
+
+                local count = math.min(available, req.remaining, limit)
+                local inserted = player.insert{name = stack.name, quality = stack.quality, count = count}
+                if inserted > 0 then
+                    inventory.remove{name = stack.name, quality = stack.quality, count = inserted}
+                    available = available - inserted
+                    req.remaining = req.remaining - inserted
+                    budget = budget - inserted / qm
+                    spawn_effect(plate.surface, container.position, pos, stack.name, inserted)
                 end
 
-                local item_name, item_quality, item_count = read_content_entry(key, value)
-
-                if item_name and item_count and item_count > 0 then
-                    local requests_for_item = logistic_requests[item_name]
-                    if requests_for_item then
-                        for _, request in ipairs(requests_for_item) do
-                            if budget_units <= 0 then
-                                break
-                            end
-
-                            local quality_matches = request.quality == nil or request.quality == item_quality
-
-                            if quality_matches and request.remaining > 0 then
-                                local quality_multiplier = get_quality_transfer_multiplier(item_quality)
-                                local max_by_budget = math.floor(budget_units * quality_multiplier)
-
-                                if max_by_budget <= 0 then
-                                    break
-                                end
-
-                                local transfer_count = math.min(item_count, request.remaining, max_by_budget)
-                                local inserted_count = player.insert{
-                                    name = item_name,
-                                    quality = item_quality,
-                                    count = transfer_count
-                                }
-
-                                if inserted_count > 0 then
-                                    inventory.remove{
-                                        name = item_name,
-                                        quality = item_quality,
-                                        count = inserted_count
-                                    }
-
-                                    item_count = item_count - inserted_count
-                                    request.remaining = request.remaining - inserted_count
-                                    total_inserted = total_inserted + inserted_count
-                                    budget_units = budget_units - (inserted_count / quality_multiplier)
-
-                                    spawn_transfer_effect(plate.surface, container.position, position, item_name, inserted_count)
-                                end
-                            end
-                        end
-                    end
-                end
+                ::next_req::
             end
+            ::next_stack::
+        end
+        ::next_container::
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Entity removal
+--------------------------------------------------------------------------------
+
+local function on_entity_removed(event)
+    local entity = event.entity
+
+    if entity.unit_number then
+        storage.container_cache[entity.unit_number] = nil
+    end
+
+    for idx, state in pairs(storage.plate_state) do
+        if state.plate == entity then
+            storage.plate_state[idx] = nil
         end
     end
-
-    local pending_after = count_pending_requests(logistic_requests)
-    mod_log(string.format("transfer summary plate=%s range=%.2f inserted_total=%d pending_before=%d pending_after=%d", plate.name, range, total_inserted, pending_before, pending_after))
 end
 
-local function on_plate_related_removed(entity)
-    if not entity or not entity.valid then
-        return
-    end
+--------------------------------------------------------------------------------
+-- Event registration
+--------------------------------------------------------------------------------
 
-    if PLATE_NAME_SET[entity.name] then
-        clear_plate_cache(entity)
-        clear_player_plate_if_matches(entity)
-    end
-end
+script.on_init(init_storage)
+script.on_configuration_changed(init_storage)
 
-script.on_init(function()
-    ensure_storage()
+script.on_event(defines.events.on_player_joined_game, function(e)
+    local player = game.get_player(e.player_index)
+    if player then update_plate_state(player) end
 end)
 
-script.on_configuration_changed(function(_)
-    ensure_storage()
+script.on_event(defines.events.on_player_changed_position, function(e)
+    local player = game.get_player(e.player_index)
+    if player then update_plate_state(player) end
 end)
 
-script.on_event(defines.events.on_player_joined_game, function(event)
-    ensure_storage()
-    local player = game.get_player(event.player_index)
-    if player then
-        update_player_plate_state(player)
-    end
+script.on_event(defines.events.on_player_removed, function(e)
+    storage.plate_state[e.player_index] = nil
 end)
 
-script.on_event(defines.events.on_player_changed_position, function(event)
-    ensure_storage()
-    local player = game.get_player(event.player_index)
-    if player then
-        update_player_plate_state(player)
-    end
-end)
+script.on_event(defines.events.on_player_mined_entity, on_entity_removed, PLATE_EVENT_FILTER)
+script.on_event(defines.events.on_robot_mined_entity, on_entity_removed, PLATE_EVENT_FILTER)
+script.on_event(defines.events.on_entity_died, on_entity_removed, PLATE_EVENT_FILTER)
+script.on_event(defines.events.script_raised_destroy, on_entity_removed, PLATE_EVENT_FILTER)
 
-script.on_event(defines.events.on_player_mined_entity, function(event)
-    ensure_storage()
-    on_plate_related_removed(event.entity)
-end)
+script.on_event(defines.events.on_tick, tick_effects)
 
-script.on_event(defines.events.on_robot_mined_entity, function(event)
-    ensure_storage()
-    on_plate_related_removed(event.entity)
-end)
-
-script.on_event(defines.events.on_entity_died, function(event)
-    ensure_storage()
-    on_plate_related_removed(event.entity)
-end)
-
-script.on_event(defines.events.script_raised_destroy, function(event)
-    ensure_storage()
-    on_plate_related_removed(event.entity)
-end)
-
-script.on_event(defines.events.on_player_removed, function(event)
-    ensure_storage()
-    storage.player_plate_state[event.player_index] = nil
-end)
-
-script.on_event(defines.events.on_tick, function(_)
-    ensure_storage()
-    update_transfer_effects()
-end)
-
-script.on_nth_tick(UPDATE_INTERVAL_TICKS, function(event)
-    ensure_storage()
+script.on_nth_tick(UPDATE_INTERVAL_TICKS, function(e)
     for _, player in pairs(game.connected_players) do
-        transfer_for_player(player, event.tick)
+        transfer_for_player(player, e.tick)
     end
 end)
