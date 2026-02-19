@@ -271,10 +271,7 @@ local function transfer_for_player(player, tick)
                 if req.quality ~= nil and req.quality ~= stack.quality then goto next_req end
 
                 local qm = quality_multiplier(stack.quality)
-                local limit = math.floor(budget * qm)
-                if limit <= 0 then break end
-
-                local count = math.min(available, req.remaining, limit)
+                local count = math.min(available, req.remaining, math.ceil(budget * qm))
                 local inserted = player.insert{name = stack.name, quality = stack.quality, count = count}
                 if inserted > 0 then
                     inventory.remove{name = stack.name, quality = stack.quality, count = inserted}

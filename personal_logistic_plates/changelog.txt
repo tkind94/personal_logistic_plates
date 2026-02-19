@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.3.1
+Date: 2026-02-16
+  Changes:
+    - Removed lower bound transfer limit from quality plates .
+
+---------------------------------------------------------------------------------------------------
 Version: 1.3.0
 Date: 2026-02-16
   Features:
@@ -11,10 +17,6 @@ Date: 2026-02-16
     - Replaced wooden-chest icons with custom plate thumbnails.
     - Added CI/CD workflow and packaging scripts.
     - Improved placement collision handling and prototype collision masks.
-
-  Fixes:
-    - Fixed false overlap-placement rejection.
-    - Fixed item transfer correctness and quality-aware inventory handling.
 
 ---------------------------------------------------------------------------------------------------
 Version: 1.2.0
