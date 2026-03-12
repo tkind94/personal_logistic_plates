@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.3.3
+Date: 2026-03-12
+  Bugfixes:
+    - Fixed plate sprites rendering cropped by modifying the texture size configuration to match the 640x640 images.
+
+---------------------------------------------------------------------------------------------------
 Version: 1.3.2
 Date: 2026-03-06
   Changes:
