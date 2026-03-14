@@ -1,6 +1,6 @@
 {
   "name": "personal_logistic_plates",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "title": "Personal Logistic Plates",
   "author": "Xaerie",
   "description": "Adds tiered personal logistic plates that pull requested items from nearby containers with visual transfer effects.",

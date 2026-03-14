@@ -49,6 +49,21 @@ config.TIERS = {
             {type = "item", name = "processing-unit", amount = 15},
             {type = "item", name = "low-density-structure", amount = 10}
         }
+    },
+    {
+        name = "vehicle_logistic_plate",
+        tier = 4,
+        order = "a[items]-b[vehicle_logistic_plate]",
+        size_tiles = 5,
+        texture_size = 640,
+        max_health = 1000,
+        range_multiplier = 12,
+        items_per_second = 450,
+        ingredients = {
+            {type = "item", name = "logistic_plate_tier3", amount = 2},
+            {type = "item", name = "processing-unit", amount = 50},
+            {type = "item", name = "low-density-structure", amount = 50}
+        }
     }
 }
 

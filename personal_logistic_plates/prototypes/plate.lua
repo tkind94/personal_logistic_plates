@@ -19,7 +19,19 @@ for _, tier in ipairs(config.TIERS) do
             collision_box = {{-half + 0.05, -half + 0.05}, {half - 0.05, half - 0.05}},
             collision_mask = {layers = {object = true}},
             selection_box = {{-half, -half}, {half, half}},
+            selection_priority = 0,
             render_layer = "floor",
+            radius_visualisation_specification = { 
+                sprite = {
+                    filename = "__base__/graphics/entity/small-electric-pole/electric-pole-radius-visualization.png",
+                    width = 12,
+                    height = 12,
+                    priority = "extra-high-no-scale"
+                },
+                distance = base_range * tier.range_multiplier, 
+                draw_in_cursor = true, 
+                draw_on_selection = true 
+            },
             picture = {
                 filename = icon,
                 priority = "high",

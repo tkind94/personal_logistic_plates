@@ -51,28 +51,38 @@ end
 --------------------------------------------------------------------------------
 
 local function collect_requests(player)
-    local point = player.get_requester_point()
-    if not point then return nil end
+    local by_item = {}
+    local has_any = false
 
-    local filters = point.filters
-    if not filters then return nil end
-
-    local by_item, has_any = {}, false
-
-    for _, f in ipairs(filters) do
-        if f.name and f.count and f.count > 0 then
-            local query = {name = f.name}
-            if f.quality then query.quality = f.quality end
-
-            local remaining = f.count - player.get_item_count(query)
-            if remaining > 0 then
-                if not by_item[f.name] then by_item[f.name] = {} end
-                by_item[f.name][#by_item[f.name] + 1] = {
-                    quality = f.quality,
-                    remaining = remaining
-                }
-                has_any = true
+    local function add_point(point, inv)
+        if not point or not point.filters then return end
+        for _, f in ipairs(point.filters) do
+            if f.name and f.count and f.count > 0 then
+                local query = {name = f.name}
+                if f.quality then query.quality = f.quality end
+                local remaining = f.count - inv.get_item_count(query)
+                if remaining > 0 then
+                    if not by_item[f.name] then by_item[f.name] = {} end
+                    by_item[f.name][#by_item[f.name] + 1] = {
+                        quality = f.quality,
+                        remaining = remaining,
+                        inv = inv -- target inventory
+                    }
+                    has_any = true
+                end
             end
+        end
+    end
+
+    local player_inv = player.get_inventory(defines.inventory.character_main)
+    if player_inv then
+        add_point(player.get_requester_point(), player_inv)
+    end
+
+    if player.vehicle then
+        local vehicle_inv = player.vehicle.get_inventory(defines.inventory.car_trunk) or player.vehicle.get_inventory(defines.inventory.spider_trunk)
+        if vehicle_inv then
+            add_point(player.vehicle.get_requester_point(), vehicle_inv)
         end
     end
 
@@ -223,6 +233,111 @@ end
 -- Core transfer
 --------------------------------------------------------------------------------
 
+local function transfer_to_player(player, pos, containers, requests, budget_ref)
+    for _, container in ipairs(containers) do
+        if budget_ref.val <= 0 then break end
+
+        local inventory = container.get_inventory(defines.inventory.chest) or container.get_inventory(defines.inventory.car_trunk)
+        if not inventory then goto next_container end
+
+        for _, stack in ipairs(inventory.get_contents()) do
+            if budget_ref.val <= 0 then break end
+            if not stack.name or stack.count <= 0 then goto next_stack end
+
+            local item_requests = requests[stack.name]
+            if not item_requests then goto next_stack end
+
+            local available = stack.count
+            for _, req in ipairs(item_requests) do
+                if budget_ref.val <= 0 or available <= 0 then break end
+                if req.remaining <= 0 then goto next_req end
+                if req.quality ~= nil and req.quality ~= stack.quality then goto next_req end
+
+                local qm = quality_multiplier(stack.quality)
+                local count = math.min(available, req.remaining, math.ceil(budget_ref.val * qm))
+                local inserted = req.inv.insert{name = stack.name, quality = stack.quality, count = count}
+                if inserted > 0 then
+                    inventory.remove{name = stack.name, quality = stack.quality, count = inserted}
+                    available = available - inserted
+                    req.remaining = req.remaining - inserted
+                    budget_ref.val = budget_ref.val - inserted / qm
+                    spawn_effect(container.surface, container.position, pos, stack.name, inserted)
+                end
+
+                ::next_req::
+            end
+            ::next_stack::
+        end
+        ::next_container::
+    end
+end
+
+local function transfer_from_player(player, pos, plate, containers, requests, budget_ref)
+    local invs_to_check = {}
+    
+    local player_inv = player.get_inventory(defines.inventory.character_main)
+    local player_trash = player.get_inventory(defines.inventory.character_trash)
+    
+    if player_trash and not player_trash.is_empty() then
+        invs_to_check[#invs_to_check+1] = player_trash
+    end
+    
+    if player.vehicle then
+        local vehicle_trash = player.vehicle.get_inventory(defines.inventory.car_trash) or player.vehicle.get_inventory(defines.inventory.spider_trash)
+        if vehicle_trash and not vehicle_trash.is_empty() then
+            invs_to_check[#invs_to_check+1] = vehicle_trash
+        end
+    end
+    
+    if #invs_to_check == 0 then return end
+
+    for pass = 1, 2 do
+        for _, container in ipairs(containers) do
+            if budget_ref.val <= 0 then return end
+            
+            if pass == 1 then
+                -- Pass 1: only touching containers
+                local bb1 = container.bounding_box
+                local bb2 = plate.bounding_box
+                -- Add 0.5 padding because collision boxes of adjacent entities have a small gap between them
+                local is_touching = (bb1.left_top.x <= bb2.right_bottom.x + 0.5 and bb1.right_bottom.x >= bb2.left_top.x - 0.5 and
+                                     bb1.left_top.y <= bb2.right_bottom.y + 0.5 and bb1.right_bottom.y >= bb2.left_top.y - 0.5)
+                if not is_touching then goto next_container end
+            else
+                -- Pass 2: Active Provider chests in full radius
+                if container.prototype.type ~= "logistic-container" or container.prototype.logistic_mode ~= "active-provider" then
+                    goto next_container
+                end
+            end
+            
+            local target_inv = container.get_inventory(defines.inventory.chest) or container.get_inventory(defines.inventory.cargo_wagon)
+            if not target_inv then goto next_container end
+
+            for _, source_inv in ipairs(invs_to_check) do
+                if budget_ref.val <= 0 then return end
+                
+                for i = 1, #source_inv do
+                    if budget_ref.val <= 0 then return end
+                    
+                    local stack = source_inv[i]
+                    if stack.valid_for_read and stack.count > 0 then
+                        local item_name = stack.name
+                        local item_quality = stack.quality
+                        local inserted = target_inv.insert({name = item_name, quality = item_quality, count = math.min(stack.count, math.ceil(budget_ref.val))})
+                        if inserted > 0 then
+                            source_inv.remove({name = item_name, quality = item_quality, count = inserted})
+                            budget_ref.val = budget_ref.val - inserted
+                            spawn_effect(container.surface, pos, container.position, item_name, inserted)
+                        end
+                    end
+                end
+            end
+
+            ::next_container::
+        end
+    end
+end
+
 local function transfer_for_player(player, tick)
     if not player.character then return end
 
@@ -245,47 +360,16 @@ local function transfer_for_player(player, tick)
     if not tier then return end
 
     local requests = collect_requests(player)
-    if not requests then return end
-
     local base_range = tonumber(settings.startup["logistic_plate_range"].value) or 10
     local containers = get_containers(plate, base_range * tier.range_multiplier, tick)
-    local budget = tier.items_per_second / UPDATES_PER_SECOND
+    
+    local budget_ref = {val = tier.items_per_second / UPDATES_PER_SECOND}
 
-    for _, container in ipairs(containers) do
-        if budget <= 0 then break end
-
-        local inventory = container.get_inventory(defines.inventory.chest)
-        if not inventory then goto next_container end
-
-        for _, stack in ipairs(inventory.get_contents()) do
-            if budget <= 0 then break end
-            if not stack.name or stack.count <= 0 then goto next_stack end
-
-            local item_requests = requests[stack.name]
-            if not item_requests then goto next_stack end
-
-            local available = stack.count
-            for _, req in ipairs(item_requests) do
-                if budget <= 0 or available <= 0 then break end
-                if req.remaining <= 0 then goto next_req end
-                if req.quality ~= nil and req.quality ~= stack.quality then goto next_req end
-
-                local qm = quality_multiplier(stack.quality)
-                local count = math.min(available, req.remaining, math.ceil(budget * qm))
-                local inserted = player.insert{name = stack.name, quality = stack.quality, count = count}
-                if inserted > 0 then
-                    inventory.remove{name = stack.name, quality = stack.quality, count = inserted}
-                    available = available - inserted
-                    req.remaining = req.remaining - inserted
-                    budget = budget - inserted / qm
-                    spawn_effect(plate.surface, container.position, pos, stack.name, inserted)
-                end
-
-                ::next_req::
-            end
-            ::next_stack::
-        end
-        ::next_container::
+    if requests then
+        transfer_to_player(player, pos, containers, requests, budget_ref)
+    end
+    if budget_ref.val > 0 then
+        transfer_from_player(player, pos, plate, containers, requests, budget_ref)
     end
 end
 
@@ -312,7 +396,12 @@ end
 --------------------------------------------------------------------------------
 
 script.on_init(init_storage)
-script.on_configuration_changed(init_storage)
+script.on_configuration_changed(function(e)
+    init_storage()
+    for _, force in pairs(game.forces) do
+        force.reset_recipes()
+    end
+end)
 
 script.on_event(defines.events.on_player_joined_game, function(e)
     local player = game.get_player(e.player_index)

@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.0
+Date: 2026-03-13
+  Features:
+    - Added area of effect visualization when holding plates.
+    - Added Tier 4 Vehicle Logistic Plate: a massive 5x5 plate designed for drive-on vehicle resupply with a new unique visual sprite.
+    - Added Trash Transfer logic: Plate now automatically dumps player and vehicle trash slots into directly adjacent containers, falling back to nearby Active Provider chests if no adjacent storage is available.
+
+---------------------------------------------------------------------------------------------------
 Version: 1.3.3
 Date: 2026-03-12
   Bugfixes:
