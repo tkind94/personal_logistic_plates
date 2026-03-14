@@ -1,4 +1,15 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.1
+Date: 2026-03-14
+  Changes:
+    - Optimized player and vehicle tracking.
+    - Cached container search, minor bug introduced with plates not finding newly placed containers in specific circumstances.
+    - Removed cargo-wagon from container search types (trains cannot stop over floor plates).
+    - Removed dead personal-deposit-chest locale entries (no corresponding prototype).
+    - Removed default-value prototype fields: selection_priority = 0 and shift = {0, 0}.
+    - Renamed internal variable invs_to_check to trash_invs for clarity.
+
+---------------------------------------------------------------------------------------------------
 Version: 1.4.0
 Date: 2026-03-13
   Features:
